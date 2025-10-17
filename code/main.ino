@@ -46,7 +46,7 @@ int joystickValue = 0;       // Raw analog value from the joystick
 // --- Constants ---
 const int centerThreshold = 50;  // Joystick deadzone to prevent drift
 const long lowerBound = 0;       // The minimum position in RUN MODE
-const long upperBound = 10000;   // The maximum position in RUN MODE
+const long upperBound = 15000;   // The maximum position in RUN MODE (135 degrees)
 
 // --- Mode & Button Debounce Control ---
 bool adjustMode = false; // Start in RUN MODE by default
