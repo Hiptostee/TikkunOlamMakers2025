@@ -1,5 +1,5 @@
 /**
- * @file tb6600_stepper_control.ino
+ * @file main.ino
  * @brief Controls a stepper motor with a joystick and features an adjustable zero position.
  *
  * This code allows for precise control of a stepper motor using a joystick.
@@ -20,7 +20,7 @@
  * Hardware:
  * - Arduino or compatible microcontroller
  * - TB6600 Stepper Motor Driver
- * - Stepper Motor
+ * - Stepper Motor (Nema 23 w/ 50:1 Gearbox)
  * - Joystick with a push-button
  */
 
