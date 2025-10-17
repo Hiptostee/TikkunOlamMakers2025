@@ -1,77 +1,142 @@
-// Define the pins connected to the TB6600 driver
-const int stepPin = 2; // Connect to PUL+ (Step/Pulse)
-const int dirPin = 3;  // Connect to DIR+ (Direction)
-const int enPin = 4;   // Connect to ENA+ (Enable)
+/**
+ * @file tb6600_stepper_control.ino
+ * @brief Controls a stepper motor with a joystick and features an adjustable zero position.
+ *
+ * This code allows for precise control of a stepper motor using a joystick.
+ * It has two modes of operation, toggled by the joystick's built-in button:
+ *
+ * 1. RUN MODE:
+ * - The motor's movement is restricted between a defined lower (0) and upper (10,000) bound.
+ * - The position is tracked and printed to the Serial Monitor.
+ *
+ * 2. ADJUST MODE:
+ * - The motor can move freely without any software limits.
+ * - The position is not tracked. This mode is used to manually move the motor
+ * to a physical starting point or "zero" position.
+ *
+ * Switching from ADJUST MODE back to RUN MODE sets the current physical position
+ * of the motor as the new logical zero (0) for position tracking.
+ *
+ * Hardware:
+ * - Arduino or compatible microcontroller
+ * - TB6600 Stepper Motor Driver
+ * - Stepper Motor
+ * - Joystick with a push-button
+ */
 
-// Define the pin for the Joystick X-axis (A0)
-const int joystickX = A0;
+// --- Pin Definitions ---
+// TB6600 Driver Pins
+const int stepPin = 2; // PUL+ pin
+const int dirPin = 3;  // DIR+ pin
+const int enPin = 4;   // ENA+ pin
 
-// Variables for motor control
-int stepSpeed = 0;   // Controls the delay between steps (speed)
-int joystickValue = 0; // Value read from the joystick (0 to 1023)
-const int centerThreshold = 50; // Tolerance around the center (512)
+// Joystick Pins
+const int joystickX = A0;  // VRx pin for X-axis movement
+const int joystickBtn = 7; // SW pin for the push-button
+
+// --- Control Variables ---
+int stepSpeed = 0;           // Delay in microseconds between steps (lower is faster)
+long currentPosition = 0;    // Tracks the motor's position in steps during RUN MODE
+int joystickValue = 0;       // Raw analog value from the joystick
+
+// --- Constants ---
+const int centerThreshold = 50;  // Joystick deadzone to prevent drift
+const long lowerBound = 0;       // The minimum position in RUN MODE
+const long upperBound = 10000;   // The maximum position in RUN MODE
+
+// --- Mode & Button Debounce Control ---
+bool adjustMode = false; // Start in RUN MODE by default
+unsigned long lastButtonPress = 0;
+const unsigned long debounceDelay = 300; // Prevents multiple button reads from one press
 
 void setup() {
-  // Set the driver pins as outputs
+  // Initialize serial communication for debugging
+  Serial.begin(9600);
+  Serial.println("Stepper motor controller starting up...");
+
+  // Configure pin modes
   pinMode(stepPin, OUTPUT);
   pinMode(dirPin, OUTPUT);
   pinMode(enPin, OUTPUT);
+  pinMode(joystickBtn, INPUT_PULLUP); // Use internal pull-up resistor for the button
 
-  // Set the Enable pin LOW to turn the driver ON and engage the motor
+  // Enable the driver by default (LOW signal enables it on many common drivers)
   digitalWrite(enPin, LOW);
 
-  // Initialize Serial communication for debugging
-  Serial.begin(9600);
-  Serial.println("Stepper Motor Controller Ready.");
+  Serial.println("✅ RUN MODE active. Position is bounded.");
+}
+
+/**
+ * @brief Executes a single step of the motor.
+ * @param speed The delay in microseconds for the step pulse. Determines motor speed.
+ * @param clockwise The direction of rotation (true for clockwise, false for counter-clockwise).
+ */
+void takeStep(int speed, bool clockwise) {
+  digitalWrite(dirPin, clockwise ? HIGH : LOW);
+
+  // Create a PULSE to trigger one step
+  digitalWrite(stepPin, HIGH);
+  delayMicroseconds(speed);
+  digitalWrite(stepPin, LOW);
+  delayMicroseconds(speed);
 }
 
 void loop() {
-  // 1. Read the joystick position
-  joystickValue = analogRead(joystickX);
+  // --- 1. Handle Mode Change on Button Press ---
+  if (digitalRead(joystickBtn) == LOW && millis() - lastButtonPress > debounceDelay) {
+    lastButtonPress = millis();
+    adjustMode = !adjustMode; // Toggle the mode
 
-  // 2. Determine Direction and Speed
-  
-  // Calculate the difference from the center (512)
-  int deviation = joystickValue - 512;
-  
-  // Check if the joystick is near the center (Motor OFF/STOP)
-  if (abs(deviation) < centerThreshold) {
-    // Motor is stopped
-    stepSpeed = 0;
-    // You can optionally disable the motor here to save power, but it loses holding torque:
-    // digitalWrite(enPin, HIGH); 
-  } else {
-    // Motor is moving
-    digitalWrite(enPin, LOW);
-
-    // a. Determine Direction
-    if (deviation > 0) {
-      // Joystick pushed right (Clockwise)
-      digitalWrite(dirPin, HIGH);
+    if (adjustMode) {
+      Serial.println("\n⚙️ ADJUST MODE ON. Motor is now free. Move to your desired zero position and press the button.\n");
     } else {
-      // Joystick pushed left (Counter-Clockwise)
-      digitalWrite(dirPin, LOW);
-    }
-
-    // b. Determine Speed
-    // Map the absolute deviation (50 to 512) to a delay time (inverse of speed).
-    // The delay range below makes the motor run from slow (2000 microsecond delay) to fast (200 microsecond delay).
-    // Note: Smaller stepSpeed number means FASTER motor speed.
-    int absDeviation = abs(deviation);
-    stepSpeed = map(absDeviation, centerThreshold, 512, 2000, 100);
-
-    // Keep stepSpeed from being too low (or it might stop working)
-    if (stepSpeed < 200) {
-      stepSpeed = 200; 
+      // When exiting adjust mode, reset the position to establish the new zero.
+      currentPosition = 0;
+      Serial.println("\n✅ RUN MODE ON. Current position is now 0. Movement is bounded.\n");
     }
   }
 
-  // 3. Drive the Motor
-  if (stepSpeed > 0) {
-    // Send a pulse (HIGH/LOW) to the Step pin
-    digitalWrite(stepPin, HIGH);
-    delayMicroseconds(stepSpeed); // Time HIGH
-    digitalWrite(stepPin, LOW);
-    delayMicroseconds(stepSpeed); // Time LOW (Total period is 2 * stepSpeed)
+  // --- 2. Read Joystick and Determine Speed/Direction ---
+  joystickValue = analogRead(joystickX);
+  int deviation = joystickValue - 512; // Calculate how far the joystick is pushed from its center
+
+  // Only move if the joystick is outside the center deadzone
+  if (abs(deviation) > centerThreshold) {
+    digitalWrite(enPin, LOW); // Ensure motor is enabled
+
+    bool clockwise = (deviation > 0);
+    int absDeviation = abs(deviation);
+
+    // Map the joystick's position to a step speed.
+    // Further from center = smaller delay = faster speed.
+    stepSpeed = map(absDeviation, centerThreshold, 512, 500, 100);
+    stepSpeed = constrain(stepSpeed, 100, 500); // Clamp the speed to a safe/usable range
+
+    // --- 3. Execute Movement Based on Current Mode ---
+    if (adjustMode) {
+      // In adjust mode, move freely without tracking position or checking bounds
+      takeStep(stepSpeed, clockwise);
+    } else {
+      // In run mode, check bounds before moving
+      if ((clockwise && currentPosition < upperBound) || (!clockwise && currentPosition > lowerBound)) {
+        takeStep(stepSpeed, clockwise);
+        // Update the position only when in run mode
+        currentPosition += (clockwise ? 1 : -1);
+      }
+    }
+  }
+
+  // --- 4. Display Status and Position Periodically ---
+  static unsigned long lastPrint = 0;
+  if (millis() - lastPrint > 250) {
+    lastPrint = millis();
+    Serial.print(adjustMode ? "[ADJUST MODE] " : "[RUN MODE]    ");
+    if (adjustMode) {
+      Serial.print("Position: UNTRACKED");
+    } else {
+      Serial.print("Position: ");
+      Serial.print(currentPosition);
+    }
+    Serial.print("       \r"); // Use carriage return to overwrite the line
   }
 }
