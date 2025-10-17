@@ -30,6 +30,7 @@
 const int stepPin = 2; // PUL+ pin
 const int dirPin = 3;  // DIR+ pin
 const int enPin = 4;   // ENA+ pin
+const int buzzer = 9;   // Buzzer Pin
 
 // Joystick Pins
 const int joystickX = A0;  // VRx pin for X-axis movement
@@ -68,6 +69,7 @@ void setup() {
   pinMode(stepPin, OUTPUT);
   pinMode(dirPin, OUTPUT);
   pinMode(enPin, OUTPUT);
+  pinMode(buzzer, OUTPUT);
   pinMode(joystickBtn, INPUT_PULLUP); // Use internal pull-up resistor for the button
   pinMode(indicatorPin, OUTPUT);      // Set indicator LED pin as an output
 
@@ -115,11 +117,13 @@ void loop() {
     if (!indicatorIsOn && (millis() - lastIndicatorOnTime > indicatorInterval)) {
       lastIndicatorOnTime = millis();
       digitalWrite(indicatorPin, HIGH);
+      tone(buzzer, 1000); // Send 1KHz sound signal...
       indicatorIsOn = true;
     }
     // Time to turn the indicator OFF
     if (indicatorIsOn && (millis() - lastIndicatorOnTime > indicatorOnDuration)) {
       digitalWrite(indicatorPin, LOW);
+      noTone(buzzer); // Turn off buzzer
       indicatorIsOn = false;
     }
   }
