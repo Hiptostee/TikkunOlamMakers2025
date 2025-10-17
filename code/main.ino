@@ -131,12 +131,11 @@ void loop() {
   if (millis() - lastPrint > 250) {
     lastPrint = millis();
     Serial.print(adjustMode ? "[ADJUST MODE] " : "[RUN MODE]    ");
+    Serial.print("Position: ");
     if (adjustMode) {
-      Serial.print("Position: UNTRACKED");
+      Serial.println("UNTRACKED");
     } else {
-      Serial.print("Position: ");
-      Serial.print(currentPosition);
+      Serial.println(currentPosition);
     }
-    Serial.print("       \r"); // Use carriage return to overwrite the line
   }
 }
