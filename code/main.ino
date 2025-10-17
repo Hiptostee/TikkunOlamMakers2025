@@ -1,5 +1,5 @@
 /**
- * @file main.ino
+ * @file tb6600_stepper_control.ino
  * @brief Controls a stepper motor with a joystick and features an adjustable zero position.
  *
  * This code allows for precise control of a stepper motor using a joystick.
@@ -11,6 +11,7 @@
  *
  * 2. ADJUST MODE:
  * - The motor can move freely without any software limits.
+ * - The Arduino's built-in LED will blink periodically to indicate this mode is active.
  * - The position is not tracked. This mode is used to manually move the motor
  * to a physical starting point or "zero" position.
  *
@@ -20,7 +21,7 @@
  * Hardware:
  * - Arduino or compatible microcontroller
  * - TB6600 Stepper Motor Driver
- * - Stepper Motor (Nema 23 w/ 50:1 Gearbox)
+ * - Stepper Motor
  * - Joystick with a push-button
  */
 
@@ -33,6 +34,9 @@ const int enPin = 4;   // ENA+ pin
 // Joystick Pins
 const int joystickX = A0;  // VRx pin for X-axis movement
 const int joystickBtn = 7; // SW pin for the push-button
+
+// Indicator Pin (uses the built-in LED on most Arduino boards)
+const int indicatorPin = LED_BUILTIN; // Typically pin 13
 
 // --- Control Variables ---
 int stepSpeed = 0;           // Delay in microseconds between steps (lower is faster)
@@ -49,6 +53,12 @@ bool adjustMode = false; // Start in RUN MODE by default
 unsigned long lastButtonPress = 0;
 const unsigned long debounceDelay = 300; // Prevents multiple button reads from one press
 
+// --- LED Indicator Variables ---
+unsigned long lastIndicatorOnTime = 0;
+bool indicatorIsOn = false;
+const unsigned long indicatorInterval = 750; // Blink every 750ms in adjust mode
+const int indicatorOnDuration = 100;         // LED stays on for 100ms
+
 void setup() {
   // Initialize serial communication for debugging
   Serial.begin(9600);
@@ -59,6 +69,7 @@ void setup() {
   pinMode(dirPin, OUTPUT);
   pinMode(enPin, OUTPUT);
   pinMode(joystickBtn, INPUT_PULLUP); // Use internal pull-up resistor for the button
+  pinMode(indicatorPin, OUTPUT);      // Set indicator LED pin as an output
 
   // Enable the driver by default (LOW signal enables it on many common drivers)
   digitalWrite(enPin, LOW);
@@ -93,10 +104,27 @@ void loop() {
       // When exiting adjust mode, reset the position to establish the new zero.
       currentPosition = 0;
       Serial.println("\n✅ RUN MODE ON. Current position is now 0. Movement is bounded.\n");
+      digitalWrite(indicatorPin, LOW); // Ensure the indicator LED is turned off
+      indicatorIsOn = false;
     }
   }
 
-  // --- 2. Read Joystick and Determine Speed/Direction ---
+  // --- 2. Visual Indicator for Adjust Mode (Non-blocking blink) ---
+  if (adjustMode) {
+    // Time to turn the indicator ON
+    if (!indicatorIsOn && (millis() - lastIndicatorOnTime > indicatorInterval)) {
+      lastIndicatorOnTime = millis();
+      digitalWrite(indicatorPin, HIGH);
+      indicatorIsOn = true;
+    }
+    // Time to turn the indicator OFF
+    if (indicatorIsOn && (millis() - lastIndicatorOnTime > indicatorOnDuration)) {
+      digitalWrite(indicatorPin, LOW);
+      indicatorIsOn = false;
+    }
+  }
+
+  // --- 3. Read Joystick and Determine Speed/Direction ---
   joystickValue = analogRead(joystickX);
   int deviation = joystickValue - 512; // Calculate how far the joystick is pushed from its center
 
@@ -112,7 +140,7 @@ void loop() {
     stepSpeed = map(absDeviation, centerThreshold, 512, 500, 100);
     stepSpeed = constrain(stepSpeed, 100, 500); // Clamp the speed to a safe/usable range
 
-    // --- 3. Execute Movement Based on Current Mode ---
+    // --- 4. Execute Movement Based on Current Mode ---
     if (adjustMode) {
       // In adjust mode, move freely without tracking position or checking bounds
       takeStep(stepSpeed, clockwise);
@@ -126,16 +154,23 @@ void loop() {
     }
   }
 
-  // --- 4. Display Status and Position Periodically ---
+  // --- 5. Display Status and Position Periodically ---
+  // Only print when the motor is stationary to prevent Serial commands
+  // from interrupting the step pulses, which causes a "pulsing" sound.
   static unsigned long lastPrint = 0;
-  if (millis() - lastPrint > 250) {
-    lastPrint = millis();
-    Serial.print(adjustMode ? "[ADJUST MODE] " : "[RUN MODE]    ");
-    Serial.print("Position: ");
-    if (adjustMode) {
-      Serial.println("UNTRACKED");
-    } else {
-      Serial.println(currentPosition);
+  if (abs(deviation) <= centerThreshold) {
+    if (millis() - lastPrint > 250) {
+      lastPrint = millis();
+
+      // Print status and position, then move to the next line
+      Serial.print(adjustMode ? "[ADJUST MODE] " : "[RUN MODE]    ");
+      Serial.print("Position: ");
+      if (adjustMode) {
+        Serial.println("UNTRACKED");
+      } else {
+        Serial.println(currentPosition);
+      }
     }
   }
 }
+
