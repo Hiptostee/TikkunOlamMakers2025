@@ -27,38 +27,30 @@
 
 // --- Pin Definitions ---
 // TB6600 Driver Pins
-const int stepPin = 2; // PUL+ pin
-const int dirPin = 3;  // DIR+ pin
-const int enPin = 4;   // ENA+ pin
-const int buzzer = 9;   // Buzzer Pin
+const int STEP_PIN = 2;   // PUL+ pin
+const int DIR_PIN = 3;    // DIR+ pin
+const int EN_PIN = 4;     // ENA+ pin
+const int BUZZER_PIN = 9; // buzzer Pin
 
 // Joystick Pins
-const int joystickX = A0;  // VRx pin for X-axis movement
-const int joystickBtn = 7; // SW pin for the push-button
+const int JOYSTICK_X_PIN = A0;  // VRx pin for X-axis movement
+const int JOYSTICK_BTN_PIN = 7; // SW pin for the push-button
 
 // Indicator Pin (uses the built-in LED on most Arduino boards)
-const int indicatorPin = LED_BUILTIN; // Typically pin 13
+const int INDICATOR_PIN = LED_BUILTIN; // Typically pin 13
 
 // --- Control Variables ---
-int stepSpeed = 0;           // Delay in microseconds between steps (lower is faster)
-long currentPosition = 0;    // Tracks the motor's position in steps during RUN MODE
-int joystickValue = 0;       // Raw analog value from the joystick
+int _stepSpeed = 0;                 // Delay in microseconds between steps (lower is faster)
+long _currentPosition = 0;          // Tracks the motor's position in steps during RUN MODE
+int _joystickValue = 0;             // Raw analog value from the joystick
+bool _adjustMode = false;           // Start in RUN MODE by default
+unsigned long _lastButtonPress = 0; // Time of last button press in milliseconds
 
 // --- Constants ---
-const int centerThreshold = 50;  // Joystick deadzone to prevent drift
-const long lowerBound = 0;       // The minimum position in RUN MODE
-const long upperBound = 15000;   // The maximum position in RUN MODE (135 degrees)
-
-// --- Mode & Button Debounce Control ---
-bool adjustMode = false; // Start in RUN MODE by default
-unsigned long lastButtonPress = 0;
-const unsigned long debounceDelay = 300; // Prevents multiple button reads from one press
-
-// --- LED Indicator Variables ---
-unsigned long lastIndicatorOnTime = 0;
-bool indicatorIsOn = false;
-const unsigned long indicatorInterval = 750; // Blink every 750ms in adjust mode
-const int indicatorOnDuration = 100;         // LED stays on for 100ms
+const int centerThreshold = 50;       // Joystick deadzone to prevent drift
+const long lowerBound = 0;            // The minimum position in RUN MODE
+const long upperBound = 15000;        // The maximum position in RUN MODE (135 degrees)
+const long buttonDebounceDelay = 300; // Prevents multiple button reads from one press
 
 void setup() {
   // Initialize serial communication for debugging
@@ -66,15 +58,14 @@ void setup() {
   Serial.println("Stepper motor controller starting up...");
 
   // Configure pin modes
-  pinMode(stepPin, OUTPUT);
-  pinMode(dirPin, OUTPUT);
-  pinMode(enPin, OUTPUT);
-  pinMode(buzzer, OUTPUT);
-  pinMode(joystickBtn, INPUT_PULLUP); // Use internal pull-up resistor for the button
-  pinMode(indicatorPin, OUTPUT);      // Set indicator LED pin as an output
+  pinMode(STEP_PIN, OUTPUT);
+  pinMode(DIR_PIN, OUTPUT);
+  pinMode(EN_PIN, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(JOYSTICK_BTN_PIN, INPUT_PULLUP); // Use internal pull-up resistor for the button
 
   // Enable the driver by default (LOW signal enables it on many common drivers)
-  digitalWrite(enPin, LOW);
+  digitalWrite(EN_PIN, LOW);
 
   Serial.println("✅ RUN MODE active. Position is bounded.");
 }
@@ -85,96 +76,132 @@ void setup() {
  * @param clockwise The direction of rotation (true for clockwise, false for counter-clockwise).
  */
 void takeStep(int speed, bool clockwise) {
-  digitalWrite(dirPin, clockwise ? HIGH : LOW);
+  //Serial.println(clockwise);
+  //Serial.println(speed);
+  //digitalWrite(EN_PIN, LOW);
+  digitalWrite(DIR_PIN, clockwise ? HIGH : LOW);
 
   // Create a PULSE to trigger one step
-  digitalWrite(stepPin, HIGH);
+  digitalWrite(STEP_PIN, HIGH);
   delayMicroseconds(speed);
-  digitalWrite(stepPin, LOW);
+  digitalWrite(STEP_PIN, LOW);
   delayMicroseconds(speed);
 }
 
-void loop() {
-  // --- 1. Handle Mode Change on Button Press ---
-  if (digitalRead(joystickBtn) == LOW && millis() - lastButtonPress > debounceDelay) {
-    lastButtonPress = millis();
-    adjustMode = !adjustMode; // Toggle the mode
+// Helper pre-declarations
+void Detect_AdjustMode();
+void Handle_AdjustMode();
+void HandleJoystick();
+void DisplayPositionInformation();
 
-    if (adjustMode) {
+void loop() {
+  Detect_AdjustMode();
+  Handle_AdjustMode();
+  HandleJoystick();
+  DisplayPositionInformation();
+  //takeStep(500,true);
+}
+
+void Detect_AdjustMode()
+{
+  // --- 1. Handle Mode Change on Button Press ---
+  // TODO: use state machine to remove need for buttonDebounceDelay and fix infinite mode toggel issue with button press
+  if (digitalRead(JOYSTICK_BTN_PIN) == LOW && millis() - _lastButtonPress > buttonDebounceDelay) 
+  {
+    _lastButtonPress = millis();
+    _adjustMode = !_adjustMode; // Toggle the mode
+
+    if (_adjustMode) 
+    {
       Serial.println("\n⚙️ ADJUST MODE ON. Motor is now free. Move to your desired zero position and press the button.\n");
-    } else {
+    } 
+    else 
+    {
       // When exiting adjust mode, reset the position to establish the new zero.
-      currentPosition = 0;
-      Serial.println("\n✅ RUN MODE ON. Current position is now 0. Movement is bounded.\n");
-      digitalWrite(indicatorPin, LOW); // Ensure the indicator LED is turned off
+      _currentPosition = 0;
+      //Serial.println("\n✅ RUN MODE ON. Current position is now 0. Movement is bounded.\n");
+      digitalWrite(INDICATOR_PIN, LOW); // Ensure the indicator LED is turned off
       indicatorIsOn = false;
     }
   }
+}
 
+void Handle_AdjustMode()
+{
   // --- 2. Visual Indicator for Adjust Mode (Non-blocking blink) ---
-  if (adjustMode) {
-    // Time to turn the indicator ON
+  if (_adjustMode) {
+    // Time to turn the buzzer ON
     if (!indicatorIsOn && (millis() - lastIndicatorOnTime > indicatorInterval)) {
       lastIndicatorOnTime = millis();
-      digitalWrite(indicatorPin, HIGH);
-      tone(buzzer, 1000); // Send 1KHz sound signal...
+      tone(BUZZER_PIN, 2000); // Send 1KHz sound signal...
       indicatorIsOn = true;
     }
     // Time to turn the indicator OFF
     if (indicatorIsOn && (millis() - lastIndicatorOnTime > indicatorOnDuration)) {
-      digitalWrite(indicatorPin, LOW);
-      noTone(buzzer); // Turn off buzzer
+      digitalWrite(INDICATOR_PIN, LOW);
+      noTone(BUZZER_PIN); // Turn off BUZZER_PIN
       indicatorIsOn = false;
     }
   }
+}
 
+void HandleJoystick()
+{
   // --- 3. Read Joystick and Determine Speed/Direction ---
-  joystickValue = analogRead(joystickX);
-  int deviation = joystickValue - 512; // Calculate how far the joystick is pushed from its center
-
+  _joystickValue = analogRead(JOYSTICK_X_PIN);
+  _joystickValue = _joystickValue - 512; // Calculate how far the joystick is pushed from its center
+  //Serial.println("HANDLE JOYSTICK");
+  //Serial.println(_joystickValue);
   // Only move if the joystick is outside the center deadzone
-  if (abs(deviation) > centerThreshold) {
-    digitalWrite(enPin, LOW); // Ensure motor is enabled
+  if (abs(_joystickValue) > centerThreshold) {
+    digitalWrite(EN_PIN, LOW); // Ensure motor is enabled
 
-    bool clockwise = (deviation > 0);
-    int absDeviation = abs(deviation);
+    bool clockwise = (_joystickValue > 0);
+    int abs_joystickValue = abs(_joystickValue);
 
     // Map the joystick's position to a step speed.
     // Further from center = smaller delay = faster speed.
-    stepSpeed = map(absDeviation, centerThreshold, 512, 500, 100);
-    stepSpeed = constrain(stepSpeed, 100, 500); // Clamp the speed to a safe/usable range
+    _stepSpeed = map(abs_joystickValue, centerThreshold, 512, 500, 100);
+    _stepSpeed = constrain(_stepSpeed, 100, 500); // Clamp the speed to a safe/usable range
 
     // --- 4. Execute Movement Based on Current Mode ---
-    if (adjustMode) {
+    if (_adjustMode) {
       // In adjust mode, move freely without tracking position or checking bounds
-      takeStep(stepSpeed, clockwise);
+      takeStep(_stepSpeed, clockwise);
     } else {
       // In run mode, check bounds before moving
-      if ((clockwise && currentPosition < upperBound) || (!clockwise && currentPosition > lowerBound)) {
-        takeStep(stepSpeed, clockwise);
+      if ((clockwise && _currentPosition < upperBound) || (!clockwise && _currentPosition > lowerBound)) {
+        //Serial.println("STEP SPEED");
+        //Serial.println(_stepSpeed);
+        takeStep(_stepSpeed, clockwise);
         // Update the position only when in run mode
-        currentPosition += (clockwise ? 1 : -1);
-      }
-    }
-  }
-
-  // --- 5. Display Status and Position Periodically ---
-  // Only print when the motor is stationary to prevent Serial commands
-  // from interrupting the step pulses, which causes a "pulsing" sound.
-  static unsigned long lastPrint = 0;
-  if (abs(deviation) <= centerThreshold) {
-    if (millis() - lastPrint > 250) {
-      lastPrint = millis();
-
-      // Print status and position, then move to the next line
-      Serial.print(adjustMode ? "[ADJUST MODE] " : "[RUN MODE]    ");
-      Serial.print("Position: ");
-      if (adjustMode) {
-        Serial.println("UNTRACKED");
-      } else {
-        Serial.println(currentPosition);
+        _currentPosition += (clockwise ? 1 : -1);
       }
     }
   }
 }
 
+void DisplayPositionInformation()
+{
+  // --- 5. Display Status and Position Periodically ---
+  // Only print when the motor is stationary to prevent Serial commands
+  // from interrupting the step pulses, which causes a "pulsing" sound.
+  static unsigned long lastPrint = 0;
+  if (false)
+  {
+  if (abs(_joystickValue) <= centerThreshold) {
+    if (millis() - lastPrint > 250) {
+      lastPrint = millis();
+
+      // Print status and position, then move to the next line
+      Serial.print(_adjustMode ? "[ADJUST MODE] " : "[RUN MODE]    ");
+      Serial.print("Position: ");
+      if (_adjustMode) {
+        Serial.println("UNTRACKED");
+      } else {
+        Serial.println(_currentPosition);
+      }
+    }
+  }
+  }
+}
